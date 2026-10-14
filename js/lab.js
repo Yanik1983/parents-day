@@ -315,6 +315,46 @@ function normalFromHeight(srcCanvas, strength = 2) {
   return t;
 }
 
+// ---------- מודלים מוכנים ----------
+// מעתיקים חלק ממודל glTF, מקטינים לגודל אמיתי, ומעמידים אותו על הרצפה במקום ובכיוון הנכונים.
+// size: { scale } – פי כמה להגדיל, או { height } – הגובה הרצוי במטרים
+function placeModel(parent, src, size, pos, rotY = 0) {
+  src.updateMatrixWorld(true);
+  const inner = src.clone(true);
+  src.matrixWorld.decompose(inner.position, inner.quaternion, inner.scale);
+  const mid = new THREE.Group();
+  mid.add(inner);
+  mid.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(mid);
+  const k = size.scale ?? size.height / box.getSize(new THREE.Vector3()).y;
+  mid.scale.setScalar(k);
+  mid.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(mid);
+  const c = box.getCenter(new THREE.Vector3());
+  mid.position.set(-c.x, -box.min.y, -c.z);
+  const outer = group(parent, pos, rotY);
+  outer.add(mid);
+  return outer;
+}
+
+// טקסטורה נוספת על אותו קנבס, בכיוון של מודלים מוכנים (glTF לא הופך את התמונה)
+function gltfTexture(tex) {
+  const t = new THREE.CanvasTexture(tex.image);
+  t.flipY = false;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+// גובה של משטח מתחת לנקודה (x, z)
+const _ray = new THREE.Raycaster();
+const _down = new THREE.Vector3(0, -1, 0);
+function surfaceY(obj, x, z) {
+  _ray.set(new THREE.Vector3(x, 4, z), _down);
+  const hit = _ray.intersectObject(obj, true)[0];
+  return hit ? hit.point.y : -1;
+}
+
 // ---------- ציורים על קנבס ----------
 function drawFloor(ctx, w, h) {
   ctx.fillStyle = '#a9b6c8';
@@ -484,11 +524,13 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   const manager = new THREE.LoadingManager();
   manager.onProgress = (url, done, total) => onProgress(done / total);
   const gltf = new GLTFLoader(manager);
-  const [env, heartGltf, personGltf] = await Promise.all([
+  const [env, heartGltf, personGltf, equipGltf, surgeonGltf, ecgGltf, cartGltf, ivGltf] = await Promise.all([
     new EXRLoader(manager).loadAsync('assets/hdri/lab.exr'),
-    gltf.loadAsync('assets/models/heart.glb'),
-    gltf.loadAsync('assets/models/person.glb'),
+    ...['heart', 'person', 'equipset', 'surgeon', 'ecg', 'cart', 'ivstand'].map((n) => gltf.loadAsync(`assets/models/${n}.glb`)),
   ]);
+  const equip = equipGltf.scene;
+  const EQ = 0.42; // קנה המידה של ערכת הציוד, כך שהמיטה באורך של כ־2.25 מ'
+  const TABLE_ROT = 0, SURGEON_ROT = 0, LAMP_ROT = 0, TOWER_ROT = 0, ECG_ROT = -2.3;
   env.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = env;
   scene.environmentIntensity = 0.55;
@@ -520,8 +562,8 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   key.shadow.normalBias = 0.02;
   scene.add(key);
   const lamp = new THREE.SpotLight('#fff6e6', 11, 6, 0.5, 0.65, 0);
-  lamp.position.set(0.25, 2.4, 0.35);
-  lamp.target.position.set(0.25, 1, 0);
+  lamp.position.set(-0.55, 2.15, 0.45);
+  lamp.target.position.set(-0.1, 1, 0);
   lamp.castShadow = true;
   lamp.shadow.mapSize.set(1024, 1024);
   lamp.shadow.bias = -0.0005;
@@ -665,34 +707,36 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   // ---- 2: מיטת הטיפולים והמטופל ----
   const bed = group(lab, [0, 0, 0]);
   const steel = mat('#c9ced6', 0.3, 0.75);
-  add(bed, rbox(1.0, 0.06, 0.6, 0.02), mat('#7b88b0', 0.5, 0.3), [-0.2, 0.03, 0]);
-  add(bed, rbox(0.42, 0.82, 0.34, 0.04), mat('#9aa6c9', 0.45, 0.3), [-0.2, 0.47, 0]);
-  add(bed, rbox(2.45, 0.05, 0.62, 0.015), mat('#2b3140', 0.35, 0.2), [0, 0.925, 0]);
-  const mattress = add(bed, rbox(2.3, 0.08, 0.56, 0.035), mat('#e9eef6', 0.7), [-0.02, 1.015, 0]);
-  add(bed, new THREE.BoxGeometry(2.3, 0.02, 0.02), steel, [0, 0.93, 0.32]);
+  // מיטת ניתוח אמיתית (מתוך ערכת הציוד). מודדים את גובה המזרן ואת הרוחב שלו
+  const table = placeModel(bed, equip.getObjectByName('Obj_OP_Bett'), { scale: EQ }, [0, 0, 0], TABLE_ROT);
+  bed.updateMatrixWorld(true);
+  const top = surfaceY(table, 0.3, 0);
+  let edge = 0.05;
+  while (edge < 0.6 && surfaceY(table, 0.3, edge + 0.01) > top - 0.03) edge += 0.01;
+  const dy = top - 1.055; // כמה המזרן גבוה (או נמוך) מהמיטה הקודמת
   // המטופל: שוכב על הגב, הראש על הכרית, ומעליו סדין שנופל על הגוף
-  add(bed, rbox(0.36, 0.08, 0.42, 0.04), mat('#f7f9fc', 0.85), [0.83, 1.09, 0]);
+  add(bed, rbox(0.36, 0.08, 0.42, 0.04), mat('#f7f9fc', 0.85), [0.83, top + 0.035, 0]);
   const patient = makePerson(personSrc, 'patient');
   patient.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0)));
-  patient.position.set(-0.92, 1.14, 0);
+  patient.position.set(-0.92, top + 0.085, 0);
   bed.add(patient);
   bed.updateMatrixWorld(true);
-  const sheetGeo = drapeSheet([patient, mattress], { x0: -1.16, x1: 0.56, z0: -0.44, z1: 0.44, edge: 0.29, top: 1.07 });
+  const sheetGeo = drapeSheet([patient, table], { x0: -1.16, x1: 0.56, z0: -edge - 0.15, z1: edge + 0.15, edge: edge + 0.01, top: top + 0.015 });
   const sheetM = new THREE.MeshPhysicalMaterial({ color: '#3f78b8', roughness: 0.95, sheen: 0.6, sheenRoughness: 0.7, sheenColor: new THREE.Color('#9cc0f0'), side: THREE.DoubleSide });
   add(bed, sheetGeo, sheetM);
   // הלב, פועם מעל החזה
   const { group: heartG, mats: heartMats } = patientHeart(heartSrc);
-  heartG.position.set(0.42, 1.36, 0.02);
+  heartG.position.set(0.42, 1.36 + dy, 0.02);
   heartG.rotation.set(-0.3, 0.4, 0);
   bed.add(heartG);
   tag(bed, 'patient');
 
   // ---- 5: משטח המיקום ----
-  const pad = group(lab, [0.42, 0.9625, 0]);
+  const pad = group(lab, [0.42, top - 0.03, 0]);
   const padM = new THREE.MeshStandardMaterial({ color: '#d9534f', roughness: 0.45, emissive: '#ff2a2a', emissiveIntensity: 0.12 });
-  add(pad, rbox(0.52, 0.025, 0.66, 0.008), padM);
+  add(pad, rbox(0.52, 0.025, 2 * edge + 0.1, 0.008), padM);
   const coilM = mat('#ffd0ce', 0.4, 0, { emissive: '#ff8a85', emissiveIntensity: 0.6 });
-  for (const x of [-0.17, 0, 0.17]) add(pad, new THREE.TorusGeometry(0.035, 0.006, 8, 24), coilM, [x, 0.0, 0.33], [0, 0, 0]);
+  for (const x of [-0.17, 0, 0.17]) add(pad, new THREE.TorusGeometry(0.035, 0.006, 8, 24), coilM, [x, 0.0, edge + 0.05], [0, 0, 0]);
   // קווי השדה המגנטי: קשתות שקופות שמהבהבות
   const fieldM = new THREE.MeshBasicMaterial({ color: '#ff8a85', transparent: true, opacity: 0.35, depthWrite: false });
   const field = group(pad, [0, 0.01, 0]);
@@ -704,14 +748,12 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   tag(pad, 'pad');
 
   // ---- הרופאה, הקטטר והכבלים ----
-  const doc = makePerson(personSrc, 'doctor');
-  doc.position.set(0.0, 0, -0.64);
-  lab.add(doc);
-  doc.updateMatrixWorld(true);
-  const handL = doc.getObjectByName('LeftHand').getWorldPosition(new THREE.Vector3());
-  const handR = doc.getObjectByName('RightHand').getWorldPosition(new THREE.Vector3());
+  // הרופא: סריקה תלת־ממדית של רופא בבגדי ניתוח, עם כובע, מסכה וכפפות
+  const doc = placeModel(lab, surgeonGltf.scene, { height: 1.8 }, [0.0, 0, -0.68], SURGEON_ROT);
+  const handR = new THREE.Vector3(-0.12, top + 0.22, -0.36);
+  const handL = new THREE.Vector3(0.06, top + 0.2, -0.3);
   const catheterM = mat('#3d6fe0', 0.35, 0.1);
-  const groin = new THREE.Vector3(0.08, 1.16, -0.08);
+  const groin = new THREE.Vector3(0.08, top + 0.1, -0.08);
   const catheter = new THREE.CatmullRomCurve3([
     handR.clone().add(new THREE.Vector3(0.02, -0.03, 0.04)), handL.clone().lerp(groin, 0.4).add(new THREE.Vector3(0, 0.05, 0)), groin,
   ]);
@@ -745,11 +787,7 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   tag(carm, 'carm');
 
   // ---- מנורת ניתוח ----
-  add(lab, new THREE.CylinderGeometry(0.06, 0.06, 0.3, 16), steel, [-0.2, WH - 0.15, 0.55]);
-  const arm = new THREE.CatmullRomCurve3([new THREE.Vector3(-0.2, WH - 0.28, 0.55), new THREE.Vector3(0.0, 2.75, 0.45), new THREE.Vector3(0.25, 2.55, 0.35)]);
-  add(lab, new THREE.TubeGeometry(arm, 20, 0.03, 10), steel);
-  add(lab, new THREE.SphereGeometry(0.28, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2), mat('#f4f6fa', 0.35, 0.2, { side: THREE.DoubleSide }), [0.25, 2.42, 0.35], null, [1, 0.45, 1]);
-  add(lab, new THREE.CircleGeometry(0.24, 40), new THREE.MeshStandardMaterial({ color: '#fff', emissive: '#fff6e0', emissiveIntensity: 2.2 }), [0.25, 2.415, 0.35], [Math.PI / 2, 0, 0]).userData.noShadow = true;
+  const opLight = placeModel(lab, equip.getObjectByName('Obj_Oplicht'), { height: 1.05 }, [-0.75, WH - 1.05, 0.55], LAMP_ROT);
 
   // ---- 6: המסכים התלויים ומפת הלב ----
   const rt = new THREE.WebGLRenderTarget(1024, 600, { samples: 4 });
@@ -798,38 +836,40 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
 
   // ---- 3: מערכת ההקלטה ----
   const rec = group(lab, [-3.3, 0, -0.45], 0.85);
-  add(rec, rbox(0.75, 0.82, 0.55, 0.03), mat('#e8ecf2', 0.5), [0, 0.47, 0]);
-  for (const [x, z] of [[-0.3, -0.22], [0.3, -0.22], [-0.3, 0.22], [0.3, 0.22]]) add(rec, new THREE.SphereGeometry(0.04, 12, 10), mat('#2a2f3a', 0.5), [x, 0.04, z]);
-  add(rec, rbox(0.6, 0.03, 0.22, 0.01), mat('#2a2f3a', 0.5), [0, 0.9, 0.1]);
-  add(rec, new THREE.CylinderGeometry(0.03, 0.03, 1.0, 12), steel, [0, 1.35, -0.18]);
-  screen(rec, 0.72, 0.45, recA, [0, 1.25, -0.12], 0);
-  screen(rec, 0.72, 0.45, recB, [0, 1.78, -0.12], 0);
+  const tower = placeModel(rec, equip.getObjectByName('Obj_Computer'), { scale: EQ }, [0, 0, 0], TOWER_ROT);
+  const recAg = gltfTexture(recA), recBg = gltfTexture(recB);
+  // במסך העליון של המגדל התמונה מסובבת ברבע סיבוב
+  recBg.center.set(0.5, 0.5);
+  recBg.rotation = -Math.PI / 2;
+  const screenMats = {
+    Obj_Computer_Mat_Display_1_0: recAg, Obj_Computer_Mat_Display2_0: recBg, Obj_Computer_Mat_Display_3_0: recAg, Obj_Computer_Mat_Fernseher_0: recBg,
+  };
+  tower.traverse((o) => {
+    if (o.isMesh && screenMats[o.name]) o.material = new THREE.MeshBasicMaterial({ map: screenMats[o.name], toneMapped: false });
+  });
   tag(rec, 'recording');
 
   // ---- 4: מגש הקטטרים ----
   const tray = group(lab, [-1.9, 0, 0.9], 0.2);
-  add(tray, rbox(0.9, 0.03, 0.55, 0.01), steel, [0, 0.9, 0]);
-  add(tray, new THREE.BoxGeometry(0.86, 0.004, 0.52), mat('#4fa3a5', 0.9), [0, 0.917, 0]);
-  for (const [x, z] of [[-0.4, -0.23], [0.4, -0.23], [-0.4, 0.23], [0.4, 0.23]]) {
-    add(tray, new THREE.CylinderGeometry(0.015, 0.015, 0.88, 10), steel, [x, 0.45, z]);
-    add(tray, new THREE.SphereGeometry(0.03, 10, 8), mat('#2a2f3a', 0.5), [x, 0.03, z]);
-  }
-  add(tray, rbox(0.86, 0.02, 0.5, 0.01), steel, [0, 0.35, 0]);
+  const trolley = placeModel(tray, equip.getObjectByName('Obj_Schiebewagen'), { scale: EQ }, [0, 0, 0], 0);
+  tray.updateMatrixWorld(true);
+  const trayTop = new THREE.Box3().setFromObject(trolley).max.y - tray.position.y;
+  add(tray, new THREE.BoxGeometry(0.42, 0.004, 0.62), mat('#4fa3a5', 0.9), [0, trayTop + 0.002, 0]);
   const coil = (cx, cz, r, turns, color, tipColor) => {
     const pts = [];
     for (let i = 0; i <= 160; i++) {
       const a = i / 160 * Math.PI * 2 * turns;
       const rr = r * (1 - i / 160 * 0.35);
-      pts.push(new THREE.Vector3(cx + Math.cos(a) * rr, 0.93 + i * 0.00003, cz + Math.sin(a) * rr));
+      pts.push(new THREE.Vector3(cx + Math.cos(a) * rr, trayTop + 0.01 + i * 0.00003, cz + Math.sin(a) * rr));
     }
     add(tray, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 400, 0.0055, 8), mat(color, 0.35, 0.05));
     const end = pts[pts.length - 1];
     add(tray, new THREE.SphereGeometry(0.011, 10, 8), mat(tipColor, 0.2, 0.7), end.toArray());
   };
-  coil(-0.2, -0.02, 0.17, 3, '#3d6fe0', '#d0d6e0');
-  coil(0.18, 0.04, 0.15, 3, '#f2f4f8', '#ffb52e');
+  coil(0, -0.15, 0.14, 3, '#3d6fe0', '#d0d6e0');
+  coil(0.02, 0.16, 0.12, 3, '#f2f4f8', '#ffb52e');
   // קטטר "פרח": קצה עם כמה זרועות
-  const flower = group(tray, [0.24, 0.94, -0.18]);
+  const flower = group(tray, [0.1, trayTop + 0.02, 0.0]);
   for (let k = 0; k < 5; k++) {
     const a = (k / 5) * Math.PI * 2;
     const c = new THREE.CatmullRomCurve3([new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(a) * 0.05, 0.02, Math.sin(a) * 0.05), new THREE.Vector3(Math.cos(a) * 0.035, 0.05, Math.sin(a) * 0.035), new THREE.Vector3(0, 0.06, 0)]);
@@ -859,9 +899,16 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   tag(gen, 'ablation');
 
   // ---- עמוד אינפוזיה ליד הראש ----
-  add(lab, new THREE.CylinderGeometry(0.012, 0.012, 1.9, 10), steel, [1.4, 0.95, -0.55]);
-  add(lab, new THREE.CylinderGeometry(0.22, 0.22, 0.02, 5), steel, [1.4, 0.03, -0.55]);
-  add(lab, new THREE.CapsuleGeometry(0.06, 0.14, 6, 14), bagM, [1.4, 1.72, -0.55], null, [1, 1, 0.5]);
+  placeModel(lab, ivGltf.scene, { height: 2.0 }, [1.4, 0, -0.55], 0);
+  add(lab, new THREE.CapsuleGeometry(0.06, 0.14, 6, 14), bagM, [1.4, 1.72, -0.47], null, [1, 1, 0.5]);
+  // מוניטור לצד הראש, שמראה את הדופק של המטופל
+  const ecgStand = placeModel(lab, ecgGltf.scene, { height: 1.55 }, [1.75, 0, 0.75], ECG_ROT);
+  const recAg2 = gltfTexture(recA);
+  ecgStand.traverse((o) => {
+    if (o.isMesh && /Display/.test(o.name)) o.material = new THREE.MeshBasicMaterial({ map: recAg2, toneMapped: false });
+  });
+  // עגלת ציוד ליד הקיר
+  placeModel(lab, cartGltf.scene, { height: 0.9 }, [3.95, 0, 2.3], -Math.PI / 2);
 
   // צללים לכל מה שלא סומן אחרת
   lab.traverse((o) => {
@@ -894,6 +941,7 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
       recTimer = 0;
       redraw(recA, t);
       redraw(recB, t);
+      recAg.needsUpdate = recBg.needsUpdate = recAg2.needsUpdate = true;
     }
     genTimer += dt;
     if (genTimer > 0.2) {
