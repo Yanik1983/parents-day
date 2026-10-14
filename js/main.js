@@ -348,8 +348,24 @@ $('btn-guide').addEventListener('click', () => {
   if (!el.hidden) layout();
 });
 
+// המסך לא נכבה כל עוד הדף פתוח (Screen Wake Lock). הדפדפן משחרר את הנעילה כשעוברים
+// ללשונית או לאפליקציה אחרת, ולכן מבקשים אותה שוב כשחוזרים לדף.
+let wakeLock = null;
+async function keepAwake() {
+  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible' || (wakeLock && !wakeLock.released)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+  } catch {
+    // לא נתמך או נחסם (למשל במצב חיסכון בסוללה): המסך יתנהג כרגיל
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.body.classList.contains('started')) keepAwake();
+});
+
 function start(tour) {
   narrator.unlock();
+  keepAwake();
   $('intro').hidden = true;
   $('panel').hidden = false;
   document.body.classList.add('started');
