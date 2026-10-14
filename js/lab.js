@@ -4,6 +4,10 @@
 
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { makePerson } from './people.js';
 
 const FONT = 'Rubik, "Segoe UI", Arial, sans-serif';
 
@@ -140,86 +144,82 @@ const TRACES_B = [
 ];
 
 // ---------- הלב ----------
-// כדור שמעוצב ללב: מתחדד לקודקוד למטה, עם שקע קטן בין שני "הפרוזדורים" למעלה, ומוטה הצידה.
-function heartGeometry(seg = 72) {
-  let g = new THREE.SphereGeometry(1, seg, Math.round(seg * 0.7));
-  const p = g.attributes.position;
-  const v = new THREE.Vector3();
-  const tilt = new THREE.Matrix4().makeRotationZ(-0.45).multiply(new THREE.Matrix4().makeRotationX(0.25));
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i);
-    const t = (1 - v.y) / 2; // 0 למעלה, 1 בקודקוד
-    const taper = 1 - 0.72 * Math.pow(t, 1.7);
-    v.x *= taper;
-    v.z *= taper * 0.82;
-    v.y *= 1.18;
-    if (v.y > 0) v.y -= 0.32 * v.y * Math.exp(-(v.x * v.x) / 0.06) * (v.z > -0.2 ? 1 : 0.4);
-    v.x += 0.08 * Math.sin(v.y * 2.4); // קצת אי־סימטריה
-    v.applyMatrix4(tilt);
-    p.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.deleteAttribute('normal');
-  g.deleteAttribute('uv');
-  g = mergeVertices(g, 1e-4);
-  g.computeVertexNormals();
+// מקטינים או מגדילים אובייקט לגובה מסוים, וממרכזים אותו סביב הראשית
+function fit(obj, height) {
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const k = height / size.y;
+  obj.scale.multiplyScalar(k);
+  const c = box.getCenter(new THREE.Vector3()).multiplyScalar(k);
+  obj.position.sub(c);
+  const g = new THREE.Group();
+  g.add(obj);
   return g;
 }
 
-// לב "אנטומי" קטן: שריר + כלי דם
-function anatomicalHeart() {
-  const g = new THREE.Group();
-  const muscle = new THREE.MeshPhysicalMaterial({
-    color: '#c8323f', roughness: 0.42, clearcoat: 0.6, clearcoatRoughness: 0.35, sheen: 0.5, sheenColor: new THREE.Color('#ff9aa5'),
-    emissive: new THREE.Color('#ff1e3c'), emissiveIntensity: 0.15,
+// הלב שעל המטופל: המודל האמיתי, עם זוהר אדום שפועם
+function patientHeart(src) {
+  const root = src.clone(true);
+  const mats = [];
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    o.material = o.material.clone();
+    o.material.emissive = new THREE.Color('#ff1e3c');
+    o.material.emissiveIntensity = 0.1;
+    o.castShadow = true;
+    mats.push(o.material);
   });
-  const heart = add(g, heartGeometry(64), muscle);
-  const aorta = mat('#d9475a', 0.45, 0, { emissive: '#ff1e3c', emissiveIntensity: 0.1 });
-  const vein = mat('#4a6fd1', 0.45, 0, { emissive: '#2040ff', emissiveIntensity: 0.08 });
-  add(g, new THREE.TorusGeometry(0.42, 0.13, 16, 40, Math.PI * 1.15), aorta, [0.05, 1.05, -0.05], [0, 0.4, -0.2]);
-  add(g, new THREE.CylinderGeometry(0.15, 0.17, 0.6, 20), aorta, [0.05, 0.85, 0.05]);
-  add(g, new THREE.CylinderGeometry(0.13, 0.15, 0.5, 20), vein, [-0.25, 0.95, 0.25], [0.25, 0, 0.35]);
-  add(g, new THREE.CylinderGeometry(0.12, 0.12, 0.55, 20), vein, [0.45, 0.9, -0.1], [0, 0, -0.15]);
-  return { group: g, muscle, heart };
+  return { group: fit(root, 0.15), mats };
 }
 
-// מפת ההפעלה (כמו ב־CARTO): צבע לפי הזמן שבו האות החשמלי מגיע לכל נקודה,
+// מפת ההפעלה (כמו ב־CARTO) על הלב האמיתי: צבע לפי הזמן שבו האות החשמלי מגיע לכל נקודה,
 // ופס לבן שעובר על הלב ומראה את ההתפשטות.
-function activationHeart() {
-  const geo = heartGeometry(96);
+function activationHeart(src) {
+  const root = src.clone(true);
+  const group = fit(root, 2.3);
+  group.updateMatrixWorld(true);
+  let mesh = null;
+  root.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+  const geo = mesh.geometry.clone();
+  mesh.geometry = geo;
   const p = geo.attributes.position;
   const n = p.count;
-  const source = new THREE.Vector3(0.55, 0.75, 0.35); // "קוצב הלב הטבעי"
+  const box = new THREE.Box3().setFromObject(group);
+  const size = box.getSize(new THREE.Vector3());
+  // "קוצב הלב הטבעי": למעלה, בצד ימין של הלב (משמאל במסך)
+  const source = new THREE.Vector3(box.min.x + size.x * 0.25, box.max.y - size.y * 0.25, box.max.z - size.z * 0.3);
   const act = new Float32Array(n);
   const v = new THREE.Vector3();
   let max = 0;
   for (let i = 0; i < n; i++) {
-    v.fromBufferAttribute(p, i);
-    act[i] = v.distanceTo(source) + 0.12 * Math.sin(v.x * 5 + v.z * 3);
+    v.fromBufferAttribute(p, i).applyMatrix4(mesh.matrixWorld);
+    act[i] = v.distanceTo(source) + 0.08 * Math.sin(v.x * 4 + v.z * 3);
     max = Math.max(max, act[i]);
   }
   const base = new Float32Array(n * 3);
   const c = new THREE.Color();
   for (let i = 0; i < n; i++) {
     act[i] /= max;
-    c.setHSL(act[i] * 0.78, 0.95, 0.52);
+    c.setHSL(act[i] * 0.78, 0.95, 0.5);
     base.set([c.r, c.g, c.b], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(base.slice(), 3));
-  const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.05 });
-  const mesh = new THREE.Mesh(geo, material);
+  mesh.material = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.42, metalness: 0.02, normalMap: mesh.material.normalMap || null,
+  });
 
-  // נקודות האבלציה (כדורים אדומים קטנים) לאורך קו על הלב
+  // נקודות האבלציה (כדורים אדומים קטנים) בשורה על הלב
   const dots = new THREE.Group();
   const dotMat = mat('#ff2b2b', 0.4, 0, { emissive: '#ff0000', emissiveIntensity: 0.6 });
   const ray = new THREE.Raycaster();
-  for (let k = 0; k < 9; k++) {
-    const a = -0.9 + k * 0.17;
-    const dir = new THREE.Vector3(Math.sin(a) * 0.9, 0.35 - k * 0.03, Math.cos(a)).normalize();
-    ray.set(dir.clone().multiplyScalar(3), dir.clone().negate());
+  for (let k = 0; k < 10; k++) {
+    const a = -0.75 + k * 0.13;
+    const dir = new THREE.Vector3(Math.sin(a), 0.25 - k * 0.04, Math.cos(a)).normalize();
+    ray.set(dir.clone().multiplyScalar(4), dir.clone().negate());
     const hit = ray.intersectObject(mesh)[0];
-    if (hit) add(dots, new THREE.SphereGeometry(0.045, 12, 10), dotMat, hit.point.toArray());
+    if (hit) add(dots, new THREE.SphereGeometry(0.05, 12, 10), dotMat, hit.point.toArray());
   }
-  mesh.add(dots);
+  group.add(dots);
 
   const colors = geo.attributes.color;
   function update(t) {
@@ -232,56 +232,87 @@ function activationHeart() {
     }
     colors.needsUpdate = true;
   }
-  return { mesh, update };
+  return { mesh: group, update };
 }
 
-// ---------- אנשים ----------
-// דמות פשוטה ומסוגננת. sitting: יושבת על כיסא. facing: הכיוון שאליו היא מסתכלת (רדיאנים סביב y).
-function person(parent, { pos, facing = 0, skin = '#e0b48f', scrub = '#2f8c8f', apron = null, cap = '#3d7fd6', hair = '#3a2418', mask = true, sitting = false, reach = 0 }) {
-  const g = group(parent, pos, facing);
-  const skinM = new THREE.MeshPhysicalMaterial({ color: skin, roughness: 0.55, sheen: 0.3, sheenColor: new THREE.Color('#ffd8c8') });
-  const cloth = mat(scrub, 0.85);
-  const pants = mat(new THREE.Color(scrub).multiplyScalar(0.8), 0.85);
-  const shoe = mat('#e9edf2', 0.5);
-  const hipY = sitting ? 0.48 : 0.92;
-  if (sitting) {
-    for (const s of [-1, 1]) {
-      add(g, new THREE.CapsuleGeometry(0.065, 0.36, 6, 14), pants, [s * 0.1, hipY, 0.2], [Math.PI / 2, 0, 0]);
-      add(g, new THREE.CapsuleGeometry(0.06, 0.36, 6, 14), pants, [s * 0.1, 0.25, 0.4]);
-      add(g, rbox(0.11, 0.07, 0.24, 0.03), shoe, [s * 0.1, 0.035, 0.45]);
+// סדין שנופל על המטופל: רשת שכל נקודה בה "נוחתת" על הגוף או על המזרן, ובקצוות נופלת למטה
+function drapeSheet(targets, { x0, x1, z0, z1, edge, top }) {
+  const nx = 70, nz = 30;
+  const geo = new THREE.PlaneGeometry(x1 - x0, z1 - z0, nx, nz);
+  geo.rotateX(-Math.PI / 2);
+  geo.translate((x0 + x1) / 2, 0, (z0 + z1) / 2);
+  const p = geo.attributes.position;
+  const ray = new THREE.Raycaster();
+  const down = new THREE.Vector3(0, -1, 0);
+  const base = new Float32Array(p.count);
+  const visible = (o) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+  const cols = nx + 1;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    if (Math.abs(z) > edge) continue;
+    ray.set(new THREE.Vector3(x, 2.5, z), down);
+    const hit = ray.intersectObjects(targets, true).find((r) => visible(r.object));
+    base[i] = hit ? hit.point.y : top;
+  }
+  // מעבר לקצה המזרן הבד נופל למטה, מהגובה שהיה לו בקצה
+  for (let cx = 0; cx <= nx; cx++) {
+    let lo = -1, hi = -1;
+    for (let cz = 0; cz <= nz; cz++) {
+      if (Math.abs(p.getZ(cz * cols + cx)) <= edge) { if (lo < 0) lo = cz; hi = cz; }
     }
-  } else {
-    for (const s of [-1, 1]) {
-      add(g, new THREE.CapsuleGeometry(0.07, 0.72, 6, 14), pants, [s * 0.1, 0.48, 0]);
-      add(g, rbox(0.11, 0.07, 0.26, 0.03), shoe, [s * 0.1, 0.035, 0.05]);
+    for (let cz = 0; cz <= nz; cz++) {
+      const i = cz * cols + cx, z = p.getZ(i);
+      if (Math.abs(z) <= edge) continue;
+      const from = base[(z < 0 ? lo : hi) * cols + cx];
+      base[i] = from - (Math.abs(z) - edge) * 2.6;
     }
   }
-  add(g, new THREE.CapsuleGeometry(0.17, 0.42, 8, 20), cloth, [0, hipY + 0.32, 0], null, [1, 1, 0.68]);
-  if (apron) add(g, rbox(0.38, 0.7, 0.05, 0.03), mat(apron, 0.55, 0.05), [0, hipY + 0.22, 0.12]);
-  add(g, new THREE.CylinderGeometry(0.05, 0.055, 0.08, 14), skinM, [0, hipY + 0.66, 0]);
-  const head = add(g, new THREE.SphereGeometry(0.11, 32, 24), skinM, [0, hipY + 0.8, 0], null, [0.92, 1.05, 1]);
-  if (cap) add(g, new THREE.SphereGeometry(0.118, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), mat(cap, 0.85), [0, hipY + 0.82, -0.005], [-0.2, 0, 0], [0.95, 0.85, 1.02]);
-  else add(g, new THREE.SphereGeometry(0.117, 32, 16, 0, Math.PI * 2, 0, Math.PI / 1.7), mat(hair, 0.8), [0, hipY + 0.82, -0.01], [-0.35, 0, 0]);
-  if (mask) add(g, rbox(0.15, 0.08, 0.04, 0.015), mat('#d9f2ee', 0.9), [0, hipY + 0.76, 0.095]);
-  else {
-    const eye = mat('#1d1d22', 0.3);
-    add(g, new THREE.SphereGeometry(0.012, 10, 8), eye, [-0.035, hipY + 0.81, 0.1]);
-    add(g, new THREE.SphereGeometry(0.012, 10, 8), eye, [0.035, hipY + 0.81, 0.1]);
-    add(g, new THREE.TorusGeometry(0.025, 0.005, 6, 16, Math.PI), mat('#a5524f', 0.6), [0, hipY + 0.765, 0.098], [0, 0, Math.PI]);
+  // החלקה, כדי שהבד ייראה רך ולא יעקוב אחרי כל פרט (אבל לא ייכנס לתוך הגוף)
+  // החלקה, כדי שהבד ייראה רך ולא יעקוב אחרי כל פרט (אבל לא ייכנס לתוך הגוף)
+  const h = base.slice();
+  for (let pass = 0; pass < 6; pass++) {
+    const copy = h.slice();
+    for (let i = 0; i < p.count; i++) {
+      const cx = i % cols, cz = Math.floor(i / cols);
+      let s = 0, k = 0;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = cx + dx, zz = cz + dz;
+        if (xx < 0 || xx > nx || zz < 0 || zz > nz) continue;
+        s += copy[zz * cols + xx]; k++;
+      }
+      h[i] = Math.max(base[i], s / k);
+    }
   }
-  // ידיים: reach = כמה הן מושטות קדימה (0 עד 1)
-  for (const s of [-1, 1]) {
-    const arm = group(g, [s * 0.2, hipY + 0.55, 0]);
-    arm.rotation.x = -0.25 - reach * 0.9;
-    arm.rotation.z = s * 0.08;
-    add(arm, new THREE.CapsuleGeometry(0.05, 0.26, 6, 12), cloth, [0, -0.15, 0]);
-    const fore = group(arm, [0, -0.3, 0]);
-    fore.rotation.x = -0.5 - reach * 0.6;
-    add(fore, new THREE.CapsuleGeometry(0.042, 0.22, 6, 12), skinM, [0, -0.13, 0]);
-    add(fore, new THREE.SphereGeometry(0.05, 14, 10), mat('#e9eef7', 0.6), [0, -0.27, 0]);
+  // קפלים קטנים בבד
+  for (let i = 0; i < p.count; i++) p.setY(i, h[i] + 0.012 + 0.006 * Math.sin(p.getX(i) * 19 + Math.sin(p.getZ(i) * 9) * 2));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// טקסטורת "נורמל" מתוך מפת גובה (קנבס בגווני אפור): נותנת לתפרים ולמרקם עומק אמיתי באור
+function normalFromHeight(srcCanvas, strength = 2) {
+  const w = srcCanvas.width, h = srcCanvas.height;
+  const src = srcCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const out = ctx.createImageData(w, h);
+  const H = (x, y) => src[(((y + h) % h) * w + ((x + w) % w)) * 4] / 255;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = (H(x + 1, y) - H(x - 1, y)) * strength;
+    const dy = (H(x, y + 1) - H(x, y - 1)) * strength;
+    const l = Math.hypot(dx, dy, 1);
+    const i = (y * w + x) * 4;
+    out.data[i] = (-dx / l * 0.5 + 0.5) * 255;
+    out.data[i + 1] = (dy / l * 0.5 + 0.5) * 255;
+    out.data[i + 2] = (1 / l * 0.5 + 0.5) * 255;
+    out.data[i + 3] = 255;
   }
-  g.userData.head = head;
-  return g;
+  ctx.putImageData(out, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
 }
 
 // ---------- ציורים על קנבס ----------
@@ -433,14 +464,6 @@ function drawControlScreen(ctx, w, h, kind) {
   }
 }
 
-function glowTexture(color) {
-  return canvasTexture(128, 128, (ctx, w, h) => {
-    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-    g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-  });
-}
-
 function labelSprite(text) {
   const tex = canvasTexture(256, 96, (ctx, w, h) => {
     ctx.fillStyle = 'rgba(255,181,46,0.95)';
@@ -456,16 +479,39 @@ function labelSprite(text) {
 }
 
 // ---------- בניית המעבדה ----------
-export function buildLab(scene, renderer) {
+export async function buildLab(scene, renderer, onProgress = () => {}) {
+  // ---- נכסים: מפת תאורה של מעבדה אמיתית, הלב, והדמות ----
+  const manager = new THREE.LoadingManager();
+  manager.onProgress = (url, done, total) => onProgress(done / total);
+  const gltf = new GLTFLoader(manager);
+  const [env, heartGltf, personGltf] = await Promise.all([
+    new EXRLoader(manager).loadAsync('assets/hdri/lab.exr'),
+    gltf.loadAsync('assets/models/heart.glb'),
+    gltf.loadAsync('assets/models/person.glb'),
+  ]);
+  env.mapping = THREE.EquirectangularReflectionMapping;
+  scene.environment = env;
+  scene.environmentIntensity = 0.55;
+  scene.environmentRotation = new THREE.Euler(0, 1.2, 0);
+  const heartSrc = heartGltf.scene;
+  const personSrc = personGltf.scene;
+
   const lab = new THREE.Group();
   scene.add(lab);
   const pickables = []; // [אובייקט, מזהה תחנה]
   const tag = (obj, id) => { pickables.push([obj, id]); return obj; };
-  const animated = [];
 
   // ---- תאורה ----
-  scene.add(new THREE.HemisphereLight('#e6edff', '#4a5268', 0.55));
-  const key = new THREE.DirectionalLight('#fff7ee', 1.35);
+  scene.add(new THREE.HemisphereLight('#e6edff', '#4a5268', 0.3));
+  // אור רך מהפנלים שבתקרה (בלי צללים, אבל עם השתקפויות רכות ואמיתיות)
+  RectAreaLightUniformsLib.init();
+  for (const [x, z] of [[-0.6, 0.2], [1.0, 0.2]]) {
+    const ra = new THREE.RectAreaLight('#fff6ea', 1.8, 1.2, 0.6);
+    ra.position.set(x, 2.98, z);
+    ra.lookAt(x, 0, z);
+    scene.add(ra);
+  }
+  const key = new THREE.DirectionalLight('#fff7ee', 1.1);
   key.position.set(2.5, 7, 4.5);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -473,7 +519,7 @@ export function buildLab(scene, renderer) {
   key.shadow.bias = -0.0004;
   key.shadow.normalBias = 0.02;
   scene.add(key);
-  const lamp = new THREE.SpotLight('#fff6e6', 22, 6, 0.5, 0.65, 0);
+  const lamp = new THREE.SpotLight('#fff6e6', 11, 6, 0.5, 0.65, 0);
   lamp.position.set(0.25, 2.4, 0.35);
   lamp.target.position.set(0.25, 1, 0);
   lamp.castShadow = true;
@@ -488,7 +534,19 @@ export function buildLab(scene, renderer) {
   const floorTex = canvasTexture(1024, 1024, drawFloor);
   floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
   floorTex.repeat.set(4, 4);
-  const floor = add(lab, new THREE.PlaneGeometry(9, 7.5), mat('#ffffff', 0.38, 0, { map: floorTex }), [0, 0, 0.25], [-Math.PI / 2, 0, 0]);
+  const floorH = document.createElement('canvas');
+  floorH.width = floorH.height = 512;
+  {
+    const c = floorH.getContext('2d');
+    c.fillStyle = '#808080'; c.fillRect(0, 0, 512, 512);
+    const rnd = mulberry(11);
+    for (let i = 0; i < 9000; i++) { const g = 110 + rnd() * 40; c.fillStyle = `rgb(${g},${g},${g})`; c.fillRect(rnd() * 512, rnd() * 512, 2, 2); }
+    c.fillStyle = '#3a3a3a';
+    for (let i = 0; i <= 4; i++) { c.fillRect(i * 128 - 2, 0, 4, 512); c.fillRect(0, i * 128 - 2, 512, 4); }
+  }
+  const floorN = normalFromHeight(floorH, 3);
+  floorN.repeat.set(4, 4);
+  const floor = add(lab, new THREE.PlaneGeometry(9, 7.5), mat('#ffffff', 0.32, 0, { map: floorTex, normalMap: floorN, normalScale: new THREE.Vector2(0.6, 0.6) }), [0, 0, 0.25], [-Math.PI / 2, 0, 0]);
   floor.userData.receiveOnly = true;
 
   // הקירות והתקרה הם משטחים חד־צדדיים שפונים פנימה: כשהמצלמה בחוץ הם נעלמים, כמו בבית בובות
@@ -572,11 +630,18 @@ export function buildLab(scene, renderer) {
     add(ctrl, rbox(0.46, 0.5, 0.07, 0.03), mat('#2a2f3a', 0.7), [x, 0.76, -4.55]);
     add(ctrl, new THREE.CylinderGeometry(0.03, 0.03, 0.42, 10), mat('#7b88b0', 0.3, 0.8), [x, 0.22, -4.82]);
   }
-  person(ctrl, { pos: [2.0, 0, -4.95], facing: Math.PI, sitting: true, scrub: '#3a7bd5', mask: false, cap: null, hair: '#2b1d14', skin: '#c99272', reach: 0.4 });
-  person(ctrl, { pos: [3.1, 0, -4.95], facing: Math.PI, sitting: true, scrub: '#7e57c2', mask: false, cap: null, hair: '#6b4428', reach: 0.4 });
+  for (const [x, role] of [[2.0, 'staffA'], [3.1, 'staffB']]) {
+    const p = makePerson(personSrc, role);
+    p.position.set(x, -0.49, -4.74);
+    p.rotation.y = Math.PI;
+    ctrl.add(p);
+  }
   // אבא: עומד עם מחשב נייד ומסתכל אל המעבדה
-  const dad = person(ctrl, { pos: [1.5, 0, -4.35], facing: 0.35, scrub: '#3f4a63', mask: false, cap: null, hair: '#2b1d14', skin: '#e0b48f', reach: 0.7 });
-  const laptop = group(dad, [0, 1.1, 0.32]);
+  const dad = makePerson(personSrc, 'dad');
+  dad.position.set(1.5, 0, -4.35);
+  dad.rotation.y = 0.35;
+  ctrl.add(dad);
+  const laptop = group(dad, [0, 1.07, 0.36]);
   add(laptop, rbox(0.34, 0.015, 0.24, 0.005), mat('#c9ced6', 0.3, 0.8));
   const lid = group(laptop, [0, 0.005, -0.11]);
   lid.rotation.x = -1.75;
@@ -603,27 +668,23 @@ export function buildLab(scene, renderer) {
   add(bed, rbox(1.0, 0.06, 0.6, 0.02), mat('#7b88b0', 0.5, 0.3), [-0.2, 0.03, 0]);
   add(bed, rbox(0.42, 0.82, 0.34, 0.04), mat('#9aa6c9', 0.45, 0.3), [-0.2, 0.47, 0]);
   add(bed, rbox(2.45, 0.05, 0.62, 0.015), mat('#2b3140', 0.35, 0.2), [0, 0.925, 0]);
-  add(bed, rbox(2.3, 0.08, 0.56, 0.035), mat('#e9eef6', 0.7), [-0.02, 1.015, 0]);
+  const mattress = add(bed, rbox(2.3, 0.08, 0.56, 0.035), mat('#e9eef6', 0.7), [-0.02, 1.015, 0]);
   add(bed, new THREE.BoxGeometry(2.3, 0.02, 0.02), steel, [0, 0.93, 0.32]);
-  // המטופל מתחת לסדין
-  const sheetM = new THREE.MeshPhysicalMaterial({ color: '#4f8fd8', roughness: 0.9, sheen: 1, sheenRoughness: 0.6, sheenColor: new THREE.Color('#9cc4ff') });
-  add(bed, new THREE.CapsuleGeometry(0.19, 1.3, 10, 28), sheetM, [-0.12, 1.12, 0], [0, 0, Math.PI / 2], [1, 0.62, 1.12]);
-  add(bed, new THREE.SphereGeometry(0.12, 20, 14), sheetM, [-0.88, 1.12, 0.09], null, [1, 0.8, 0.9]);
-  add(bed, new THREE.SphereGeometry(0.12, 20, 14), sheetM, [-0.88, 1.12, -0.09], null, [1, 0.8, 0.9]);
-  add(bed, rbox(0.34, 0.08, 0.4, 0.04), mat('#f7f9fc', 0.85), [0.97, 1.08, 0]);
-  const skin = new THREE.MeshPhysicalMaterial({ color: '#e0b896', roughness: 0.55, sheen: 0.3, sheenColor: new THREE.Color('#ffd8c8') });
-  add(bed, new THREE.SphereGeometry(0.1, 32, 24), skin, [0.97, 1.2, 0], null, [1, 0.95, 0.9]);
-  add(bed, new THREE.SphereGeometry(0.104, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), mat('#5a3d2b', 0.85), [1.0, 1.2, 0], [0, 0, -Math.PI / 2]);
+  // המטופל: שוכב על הגב, הראש על הכרית, ומעליו סדין שנופל על הגוף
+  add(bed, rbox(0.36, 0.08, 0.42, 0.04), mat('#f7f9fc', 0.85), [0.83, 1.09, 0]);
+  const patient = makePerson(personSrc, 'patient');
+  patient.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0)));
+  patient.position.set(-0.92, 1.14, 0);
+  bed.add(patient);
+  bed.updateMatrixWorld(true);
+  const sheetGeo = drapeSheet([patient, mattress], { x0: -1.16, x1: 0.56, z0: -0.44, z1: 0.44, edge: 0.29, top: 1.07 });
+  const sheetM = new THREE.MeshPhysicalMaterial({ color: '#3f78b8', roughness: 0.95, sheen: 0.6, sheenRoughness: 0.7, sheenColor: new THREE.Color('#9cc0f0'), side: THREE.DoubleSide });
+  add(bed, sheetGeo, sheetM);
   // הלב, פועם מעל החזה
-  const { group: heartG, muscle } = anatomicalHeart();
-  heartG.scale.setScalar(0.07);
-  heartG.position.set(0.42, 1.3, 0.04);
-  heartG.rotation.y = 0.5;
+  const { group: heartG, mats: heartMats } = patientHeart(heartSrc);
+  heartG.position.set(0.42, 1.36, 0.02);
+  heartG.rotation.set(-0.3, 0.4, 0);
   bed.add(heartG);
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture('rgba(255,70,100,0.9)'), blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-  glow.position.copy(heartG.position);
-  glow.scale.setScalar(0.32);
-  bed.add(glow);
   tag(bed, 'patient');
 
   // ---- 5: משטח המיקום ----
@@ -643,15 +704,21 @@ export function buildLab(scene, renderer) {
   tag(pad, 'pad');
 
   // ---- הרופאה, הקטטר והכבלים ----
-  const doc = person(lab, { pos: [-0.28, 0, -0.66], facing: 0, apron: '#2f6f73', scrub: '#2f8c8f', reach: 0.9 });
+  const doc = makePerson(personSrc, 'doctor');
+  doc.position.set(0.0, 0, -0.64);
+  lab.add(doc);
+  doc.updateMatrixWorld(true);
+  const handL = doc.getObjectByName('LeftHand').getWorldPosition(new THREE.Vector3());
+  const handR = doc.getObjectByName('RightHand').getWorldPosition(new THREE.Vector3());
   const catheterM = mat('#3d6fe0', 0.35, 0.1);
+  const groin = new THREE.Vector3(0.08, 1.16, -0.08);
   const catheter = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-0.32, 1.13, -0.36), new THREE.Vector3(-0.3, 1.18, -0.22), new THREE.Vector3(-0.26, 1.16, -0.1), new THREE.Vector3(-0.22, 1.13, -0.04),
+    handR.clone().add(new THREE.Vector3(0.02, -0.03, 0.04)), handL.clone().lerp(groin, 0.4).add(new THREE.Vector3(0, 0.05, 0)), groin,
   ]);
-  add(lab, new THREE.TubeGeometry(catheter, 40, 0.006, 8), catheterM);
-  add(lab, new THREE.CapsuleGeometry(0.018, 0.12, 4, 10), mat('#e8ecf5', 0.4), [-0.32, 1.12, -0.42], [Math.PI / 2.4, 0, 0]);
+  add(lab, new THREE.TubeGeometry(catheter, 40, 0.005, 8), catheterM);
+  add(lab, new THREE.CapsuleGeometry(0.016, 0.11, 4, 10), mat('#e8ecf5', 0.4), handR.clone().add(new THREE.Vector3(0, -0.02, 0)).toArray(), [Math.PI / 2.3, 0, 0]);
   const cable = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-0.32, 1.1, -0.48), new THREE.Vector3(-0.5, 0.7, -0.5), new THREE.Vector3(-0.2, 0.02, -0.95),
+    handR.clone().add(new THREE.Vector3(0, -0.05, -0.06)), new THREE.Vector3(handR.x - 0.1, 0.7, -0.5), new THREE.Vector3(-0.2, 0.02, -0.95),
     new THREE.Vector3(1.6, 0.02, -0.5), new THREE.Vector3(2.35, 0.3, 0.25), new THREE.Vector3(2.45, 0.85, 0.5),
   ]);
   add(lab, new THREE.TubeGeometry(cable, 120, 0.008, 8), mat('#9aa3b5', 0.5));
@@ -695,8 +762,8 @@ export function buildLab(scene, renderer) {
   const mk = new THREE.DirectionalLight('#ffffff', 2.2);
   mk.position.set(2, 3, 4);
   mapScene.add(mk);
-  const act = activationHeart();
-  act.mesh.position.x = -0.35;
+  const act = activationHeart(heartSrc);
+  act.mesh.position.x = -0.3;
   mapScene.add(act.mesh);
   // סרגל צבעים בצד המסך
   const legend = canvasTexture(64, 512, (ctx, w, h) => {
@@ -730,7 +797,7 @@ export function buildLab(scene, renderer) {
   tag(boom, 'mapping');
 
   // ---- 3: מערכת ההקלטה ----
-  const rec = group(lab, [-3.0, 0, -1.2], 0.55);
+  const rec = group(lab, [-3.3, 0, -0.45], 0.85);
   add(rec, rbox(0.75, 0.82, 0.55, 0.03), mat('#e8ecf2', 0.5), [0, 0.47, 0]);
   for (const [x, z] of [[-0.3, -0.22], [0.3, -0.22], [-0.3, 0.22], [0.3, 0.22]]) add(rec, new THREE.SphereGeometry(0.04, 12, 10), mat('#2a2f3a', 0.5), [x, 0.04, z]);
   add(rec, rbox(0.6, 0.03, 0.22, 0.01), mat('#2a2f3a', 0.5), [0, 0.9, 0.1]);
@@ -812,10 +879,8 @@ export function buildLab(scene, renderer) {
     // פעימות הלב: שתי פעימות קצרות, כמו לב אמיתי
     const ph = (t / 0.85) % 1;
     const pulse = Math.exp(-(((ph - 0.08) / 0.05) ** 2)) + 0.6 * Math.exp(-(((ph - 0.28) / 0.05) ** 2));
-    heartG.scale.setScalar(0.07 * (1 + 0.12 * pulse));
-    muscle.emissiveIntensity = 0.12 + 0.5 * pulse;
-    glow.material.opacity = 0.35 + 0.6 * pulse;
-    glow.scale.setScalar((active === 'patient' ? 0.42 : 0.3) * (1 + 0.15 * pulse));
+    heartG.scale.setScalar(1 + 0.1 * pulse);
+    for (const m of heartMats) m.emissiveIntensity = 0.08 + 0.45 * pulse;
 
     act.mesh.rotation.y = t * 0.35;
     act.mesh.rotation.x = Math.sin(t * 0.25) * 0.15;
@@ -844,7 +909,6 @@ export function buildLab(scene, renderer) {
     fieldM.opacity = 0.25 + 0.15 * Math.sin(t * 4);
     dadTag.material.opacity = active === 'control' ? 1 : 0.85;
     dadTag.position.y = 2.02 + Math.sin(t * 2) * 0.02;
-    doc.rotation.y = Math.sin(t * 0.5) * 0.06;
   }
 
   return {

@@ -2,7 +2,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildLab } from './lab.js';
 import { STATIONS, INTRO, OUTRO, OVERVIEW_VIEW, QUIZ_RIGHT, QUIZ_WRONG } from './data.js';
 import { GLOSSARY } from './glossary.js';
@@ -21,19 +25,16 @@ await Promise.race([
 
 // ---------- סצנה ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone() ? 1.5 : 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.92;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('scene').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0b1024');
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.45;
 
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.05, 60);
 camera.position.set(...OVERVIEW_VIEW.cam);
@@ -47,13 +48,35 @@ controls.maxDistance = 10;
 controls.maxPolarAngle = 1.52;
 controls.autoRotateSpeed = 0.35;
 
-const lab = buildLab(scene, renderer);
+const lab = await buildLab(scene, renderer, (f) => {
+  $('loading').textContent = `טוען את המעבדה… ${Math.round(f * 100)}%`;
+});
+$('loading').hidden = true;
+$('btn-start').disabled = false;
+$('btn-explore').disabled = false;
+
+// ---------- עיבוד התמונה: צל רך בפינות ובמגע בין חפצים (AO), זוהר עדין למסכים ולאורות ----------
+// במחשב חלש או בטלפון מוותרים על ה־AO, שהוא הכי כבד
+const highQuality = !phone() && (navigator.hardwareConcurrency || 8) >= 4;
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+composer.addPass(new RenderPass(scene, camera));
+if (highQuality) {
+  const gtao = new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
+  gtao.updateGtaoMaterial({ radius: 0.4, distanceExponent: 1.2, thickness: 1, scale: 1, samples: 16 });
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+  gtao.blendIntensity = 0.85;
+  composer.addPass(gtao);
+}
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.15, 0.4, 0.98));
+composer.addPass(new OutputPass());
 
 // ---------- מצלמה ----------
 // חלון ההסבר מכסה חלק מהמסך, ולכן מזיזים את מרכז התמונה אל החלק הפנוי
 function layout() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(w, h);
   const base = w / h < 0.8 ? 64 : w / h < 1.2 ? 55 : 46;
   const panel = $('panel');
   const r = panel.hidden ? null : panel.getBoundingClientRect();
@@ -348,7 +371,7 @@ function animate() {
   stepFlight(dt);
   if (!flight) controls.update();
   lab.update(time, dt);
-  renderer.render(scene, camera);
+  composer.render(dt);
   placeSpots();
   if (!$('presenter').hidden) presenter.update(dt, narrator.speaking, phone() ? 0.2 : 0.5);
 }

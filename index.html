@@ -53,9 +53,11 @@
       <p>מה אבא עושה בעבודה? בואו נטייל בתלת־ממד בחדר מיוחד בבית החולים, שבו מתקנים את <b>החשמל של הלב</b>.</p>
       <p class="muted">נועם, המדריך מהמסע במערכת השמש, יסביר על כל תחנה בקול.</p>
       <div class="intro-actions">
-        <button id="btn-start" class="btn btn-primary btn-big" type="button">▶ מתחילים את הסיור</button>
-        <button id="btn-explore" class="btn btn-big" type="button">🔍 לטייל לבד</button>
+        <button id="btn-start" class="btn btn-primary btn-big" type="button" disabled>▶ מתחילים את הסיור</button>
+        <button id="btn-explore" class="btn btn-big" type="button" disabled>🔍 לטייל לבד</button>
       </div>
+      <p id="loading" class="muted loading" aria-live="polite">טוען את המעבדה…</p>
+      <p class="credits">קרדיטים: מודל הלב – <a href="https://sketchfab.com/3d-models/realistic-human-heart-3f8072336ce94d18b3d0d055a1ece089" target="_blank" rel="noopener">Realistic Human Heart</a> מאת neshallads (CC BY 4.0) · הדמויות – אווטאר Ready Player Me מתוך הדוגמאות של three.js · תאורת המעבדה – Poly Haven (CC0)</p>
     </div>
   </div>
 
