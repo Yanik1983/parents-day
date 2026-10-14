@@ -100,10 +100,21 @@ function layout() {
 }
 
 let flight = null;
+const pullRay = new THREE.Raycaster();
+pullRay.camera = camera;
 function flyTo(view) {
   const to = { cam: new THREE.Vector3(...view.cam), at: new THREE.Vector3(...view.at) };
-  // בטלפון המסך צר, אז מתרחקים קצת כדי שכל החפץ ייכנס
-  if (phone() && view !== OVERVIEW_VIEW) to.cam.sub(to.at).multiplyScalar(1.45).add(to.at);
+  // בטלפון המסך צר, אז מתרחקים קצת כדי שכל החפץ ייכנס,
+  // אבל עוצרים לפני חפץ שהיה נכנס בין המצלמה לתחנה (למשל המסכים התלויים)
+  if (phone() && view !== OVERVIEW_VIEW) {
+    const dir = to.cam.clone().sub(to.at).normalize();
+    let extra = to.cam.distanceTo(to.at) * 0.45;
+    pullRay.set(to.cam, dir);
+    pullRay.far = extra + 0.3;
+    const hit = pullRay.intersectObjects(scene.children, true).find((h) => h.object.isMesh && h.object.visible && !h.object.material.transparent);
+    if (hit) extra = Math.max(0, hit.distance - 0.3);
+    to.cam.addScaledVector(dir, extra);
+  }
   const from = { cam: camera.position.clone(), at: controls.target.clone() };
   const dist = from.cam.distanceTo(to.cam);
   flight = { from, to, t: 0, dur: reduceMotion ? 0.01 : THREE.MathUtils.clamp(1.1 + dist * 0.18, 1.3, 2.4), lift: Math.min(0.7, dist * 0.12) };
