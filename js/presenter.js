@@ -1,6 +1,6 @@
 // נועם – דמות תלת־ממדית של ילד (בן 9 בערך) שמציגה את ההסברים.
 // הדמות בנויה כולה בקוד: הראש "מפוסל" מכדור, עם לסת שנפתחת (morph target), עיניים עם קשתית ועפעפיים,
-// שיער מקווצות, וחליפת חלל עם חומרים פיזיקליים. היחידות הן מטרים, והמצלמה מצלמת מהמותניים ומעלה.
+// שיער מקווצות, וחולצת טי עם תג אורח (הוא בא לבקר את אבא בבית החולים). היחידות הן מטרים, והמצלמה מצלמת מהמותניים ומעלה.
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -230,48 +230,43 @@ function patchTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = s;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#e9edf3';
-  ctx.fillRect(0, 0, s, s);
-  ctx.fillStyle = '#1d3f8f';
+  ctx.fillStyle = '#ff4d6d';
   ctx.beginPath();
-  ctx.arc(s / 2, s / 2, s * 0.46, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#f2b640';
-  ctx.lineWidth = 10;
-  ctx.stroke();
-  ctx.fillStyle = '#ff9f1c';
-  ctx.beginPath();
-  ctx.arc(s * 0.5, s * 0.5, s * 0.17, 0, Math.PI * 2);
+  ctx.moveTo(s / 2, s * 0.85);
+  ctx.bezierCurveTo(s * 0.05, s * 0.55, s * 0.12, s * 0.12, s / 2, s * 0.32);
+  ctx.bezierCurveTo(s * 0.88, s * 0.12, s * 0.95, s * 0.55, s / 2, s * 0.85);
   ctx.fill();
   ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 7;
+  ctx.lineWidth = 10;
+  ctx.lineJoin = 'round';
   ctx.beginPath();
-  ctx.ellipse(s * 0.5, s * 0.5, s * 0.3, s * 0.08, -0.35, 0, Math.PI * 2);
+  ctx.moveTo(s * 0.18, s * 0.52); ctx.lineTo(s * 0.38, s * 0.52); ctx.lineTo(s * 0.45, s * 0.36);
+  ctx.lineTo(s * 0.53, s * 0.68); ctx.lineTo(s * 0.6, s * 0.48); ctx.lineTo(s * 0.82, s * 0.48);
   ctx.stroke();
-  for (let i = 0; i < 14; i++) {
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(s * (0.2 + Math.random() * 0.6), s * (0.15 + Math.random() * 0.7), 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
+// תג אורח: פס כחול עם המילה "אורח", ומתחתיו השם
 function nameTagTexture(name) {
   const cv = document.createElement('canvas');
   cv.width = 256;
-  cv.height = 96;
+  cv.height = 128;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#1d3f8f';
-  ctx.fillRect(0, 0, 256, 96);
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 58px Rubik, Arial, sans-serif';
+  ctx.fillRect(0, 0, 256, 128);
+  ctx.fillStyle = '#1d3f8f';
+  ctx.fillRect(0, 0, 256, 40);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.direction = 'rtl';
-  ctx.fillText(name, 128, 52);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 30px Rubik, Arial, sans-serif';
+  ctx.fillText('אורח', 128, 22);
+  ctx.fillStyle = '#1f2a44';
+  ctx.font = 'bold 58px Rubik, Arial, sans-serif';
+  ctx.fillText(name, 128, 86);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -338,9 +333,7 @@ export class Presenter {
     });
     this.skinMat = skinMat;
     const fabric = fabricNormalMap();
-    const suitMat = new THREE.MeshStandardMaterial({ color: '#eceff3', roughness: 0.82, normalMap: fabric, normalScale: new THREE.Vector2(0.35, 0.35) });
-    const suitDark = new THREE.MeshStandardMaterial({ color: '#8d96a3', roughness: 0.7 });
-    const metal = new THREE.MeshStandardMaterial({ color: '#c9ced6', metalness: 0.85, roughness: 0.28 });
+    const suitMat = new THREE.MeshStandardMaterial({ color: '#2fb3a8', roughness: 0.9, normalMap: fabric, normalScale: new THREE.Vector2(0.35, 0.35) });
     const orange = new THREE.MeshStandardMaterial({ color: '#f08a1c', roughness: 0.6 });
     const blue = new THREE.MeshStandardMaterial({ color: '#2a56b8', roughness: 0.55 });
     const black = new THREE.MeshStandardMaterial({ color: '#1c1e22', roughness: 0.45, metalness: 0.2 });
@@ -363,22 +356,15 @@ export class Presenter {
     ].map(([x, y]) => new THREE.Vector2(x, y));
     const torso = add(body, new THREE.LatheGeometry(profile, 48), suitMat);
     torso.scale.z = 0.68;
-    // חזית החליפה
-    add(body, new THREE.TorusGeometry(0.118, 0.012, 10, 48), blue, [0, 0.79, 0], [Math.PI / 2, 0, 0], [1, 0.7, 1]);
-    add(body, new THREE.CylinderGeometry(0.003, 0.003, 0.24, 6), suitDark, [0.0, 0.92, 0.088], [0.1, 0, 0]);
-    const patch = add(body, new THREE.CircleGeometry(0.03, 40), new THREE.MeshStandardMaterial({ map: patchTexture(), roughness: 0.8 }), [-0.062, 0.975, 0.083], [-0.18, -0.38, 0]);
+    // לב מודפס על החולצה
+    const patch = add(body, new THREE.CircleGeometry(0.034, 40), new THREE.MeshStandardMaterial({ map: patchTexture(), roughness: 0.85, transparent: true }), [-0.058, 0.97, 0.084], [-0.18, -0.38, 0]);
     patch.renderOrder = 1;
-    add(body, new THREE.PlaneGeometry(0.06, 0.022), new THREE.MeshStandardMaterial({ map: nameTagTexture('נועם'), roughness: 0.8 }), [0.064, 0.985, 0.083], [-0.18, 0.38, 0]);
-    // יחידת בקרה על החזה
-    const dcm = add(body, new THREE.BoxGeometry(0.09, 0.05, 0.03), suitDark, [0, 0.86, 0.085], [-0.05, 0, 0]);
-    for (const [x, col] of [[-0.025, '#e8453c'], [0, '#41c463'], [0.025, '#f2b640']]) {
-      add(dcm, new THREE.CylinderGeometry(0.006, 0.006, 0.008, 16), new THREE.MeshStandardMaterial({ color: col, roughness: 0.3 }), [x, 0.004, 0.016], [Math.PI / 2, 0, 0]);
-    }
-    // תרמיל גב וכתפיים
-    add(body, new THREE.BoxGeometry(0.24, 0.3, 0.1), new THREE.MeshStandardMaterial({ color: '#d7dbe1', roughness: 0.7 }), [0, 0.92, -0.12]);
-    // טבעת צוואר מתכתית
-    add(body, new THREE.TorusGeometry(0.058, 0.012, 16, 48), metal, [0, 1.1, 0.004], [Math.PI / 2 + 0.08, 0, 0]);
-    add(body, new THREE.TorusGeometry(0.058, 0.004, 8, 48), orange, [0, 1.088, 0.004], [Math.PI / 2 + 0.08, 0, 0]);
+    // תג אורח על שרוך
+    add(body, new THREE.PlaneGeometry(0.06, 0.03), new THREE.MeshStandardMaterial({ map: nameTagTexture('נועם'), roughness: 0.8 }), [0.06, 0.93, 0.087], [-0.12, 0.3, 0]);
+    const lanyard = new THREE.CatmullRomCurve3([new THREE.Vector3(0.035, 1.1, 0.03), new THREE.Vector3(0.07, 1.0, 0.085), new THREE.Vector3(0.06, 0.95, 0.088)]);
+    add(body, new THREE.TubeGeometry(lanyard, 16, 0.003, 6), blue);
+    // צווארון
+    add(body, new THREE.TorusGeometry(0.056, 0.009, 12, 48), new THREE.MeshStandardMaterial({ color: '#23968d', roughness: 0.9 }), [0, 1.1, 0.004], [Math.PI / 2 + 0.08, 0, 0]);
 
     // צוואר
     add(body, skinTint(new THREE.CylinderGeometry(0.041, 0.046, 0.1, 24), [0.93, 0.9, 0.9]), skinMat, [0, 1.13, -0.004]);
@@ -390,24 +376,22 @@ export class Presenter {
       shoulder.position.set(side * 0.135, 1.04, 0);
       body.add(shoulder);
       add(shoulder, new THREE.SphereGeometry(0.045, 24, 16), suitMat);
-      add(shoulder, new THREE.CapsuleGeometry(0.042, 0.17, 8, 20), suitMat, [0, -0.11, 0]);
-      add(shoulder, new THREE.TorusGeometry(0.043, 0.006, 8, 32), blue, [0, -0.06, 0], [Math.PI / 2, 0, 0]);
+      // שרוול קצר, ומתחתיו זרוע
+      add(shoulder, new THREE.CylinderGeometry(0.05, 0.047, 0.1, 20), suitMat, [0, -0.04, 0]);
+      add(shoulder, skinTint(new THREE.CapsuleGeometry(0.036, 0.17, 8, 20)), skinMat, [0, -0.11, 0]);
       const elbow = new THREE.Group();
       elbow.position.set(0, -0.225, 0);
       shoulder.add(elbow);
-      add(elbow, new THREE.CapsuleGeometry(0.038, 0.15, 8, 20), suitMat, [0, -0.09, 0]);
-      add(elbow, new THREE.CylinderGeometry(0.043, 0.043, 0.028, 24), orange, [0, -0.18, 0]);
+      add(elbow, skinTint(new THREE.CapsuleGeometry(0.032, 0.15, 8, 20)), skinMat, [0, -0.09, 0]);
       const hand = new THREE.Group();
       hand.position.set(0, -0.2, 0);
       elbow.add(hand);
-      // כפפה: כף יד, אצבעות ואגודל
-      const glove = new THREE.MeshStandardMaterial({ color: '#f1f2f4', roughness: 0.75 });
-      add(hand, new THREE.SphereGeometry(0.04, 20, 14), glove, [0, -0.035, 0], null, [0.85, 1, 0.5]);
+      // כף יד, אצבעות ואגודל
+      add(hand, skinTint(new THREE.SphereGeometry(0.036, 20, 14)), skinMat, [0, -0.035, 0], null, [0.85, 1, 0.5]);
       for (let f = 0; f < 4; f++) {
-        add(hand, new THREE.CapsuleGeometry(0.0085, 0.035, 4, 10), glove, [(f - 1.5) * 0.017, -0.085 + Math.abs(f - 1.5) * 0.004, 0.004], [0.15, 0, 0]);
+        add(hand, skinTint(new THREE.CapsuleGeometry(0.0078, 0.033, 4, 10)), skinMat, [(f - 1.5) * 0.016, -0.083 + Math.abs(f - 1.5) * 0.004, 0.004], [0.15, 0, 0]);
       }
-      add(hand, new THREE.CapsuleGeometry(0.01, 0.03, 4, 10), glove, [side * -0.035, -0.04, 0.012], [0.3, 0, side * 0.7]);
-      add(hand, new THREE.SphereGeometry(0.03, 16, 10), suitDark, [0, -0.04, -0.012], null, [0.75, 0.8, 0.2]);
+      add(hand, skinTint(new THREE.CapsuleGeometry(0.0095, 0.028, 4, 10)), skinMat, [side * -0.032, -0.04, 0.012], [0.3, 0, side * 0.7]);
       shoulder.rotation.z = side * 0.08;
       this.arms.push({ side, shoulder, elbow, hand, sz: side * 0.08, sx: 0, ex: -0.15, ez: 0 });
     }
