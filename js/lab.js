@@ -410,33 +410,35 @@ function drawRadiation(ctx, w, h) {
   ctx.fillText('קרינה', w * 0.7, h * 0.64);
 }
 
+// כרזה על הקיר: מערכת ההולכה של הלב
 function drawPoster(ctx, w, h) {
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, '#0b1030'); g.addColorStop(1, '#04050f');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-  const rnd = mulberry(3);
-  for (let i = 0; i < 220; i++) {
-    ctx.fillStyle = `rgba(255,255,255,${0.3 + rnd() * 0.7})`;
-    ctx.beginPath(); ctx.arc(rnd() * w, rnd() * h, rnd() * 1.6 + 0.3, 0, 7); ctx.fill();
+  ctx.fillStyle = '#f7f9fc'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#1f3a6b'; ctx.fillRect(0, 0, w, h * 0.13);
+  ctx.direction = 'rtl'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff'; ctx.font = `700 ${w * 0.075}px ${FONT}`;
+  ctx.fillText('מערכת ההולכה של הלב', w / 2, h * 0.085);
+  // לב
+  const cx = w / 2, cy = h * 0.5, s = w * 0.36;
+  ctx.fillStyle = '#f3c4c8'; ctx.strokeStyle = '#c0394b'; ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + s * 1.05);
+  ctx.bezierCurveTo(cx - s * 1.5, cy + s * 0.1, cx - s * 0.95, cy - s * 0.95, cx, cy - s * 0.4);
+  ctx.bezierCurveTo(cx + s * 0.95, cy - s * 0.95, cx + s * 1.5, cy + s * 0.1, cx, cy + s * 1.05);
+  ctx.fill(); ctx.stroke();
+  // מסלול האות: מהקוצב הטבעי, דרך הצומת, אל החדרים
+  const sa = [cx - s * 0.55, cy - s * 0.35], av = [cx - s * 0.05, cy + s * 0.05];
+  ctx.strokeStyle = '#ffb52e'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(...sa); ctx.lineTo(...av); ctx.lineTo(cx, cy + s * 0.35);
+  ctx.moveTo(cx, cy + s * 0.35); ctx.quadraticCurveTo(cx - s * 0.6, cy + s * 0.55, cx - s * 0.75, cy + s * 0.1);
+  ctx.moveTo(cx, cy + s * 0.35); ctx.quadraticCurveTo(cx + s * 0.6, cy + s * 0.55, cx + s * 0.75, cy + s * 0.1);
+  ctx.stroke();
+  for (const [p, label, dx] of [[sa, 'קוצב טבעי', -1], [av, 'צומת', 1]]) {
+    ctx.fillStyle = '#e0435d'; ctx.beginPath(); ctx.arc(p[0], p[1], 14, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1f2a44'; ctx.font = `600 ${w * 0.05}px ${FONT}`;
+    ctx.fillText(label, p[0] + dx * w * 0.1, p[1] - 22);
   }
-  const cx = w / 2, cy = h * 0.42;
-  const sun = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.16);
-  sun.addColorStop(0, '#fff3c0'); sun.addColorStop(0.5, '#ffb52e'); sun.addColorStop(1, 'rgba(255,120,0,0)');
-  ctx.fillStyle = sun; ctx.beginPath(); ctx.arc(cx, cy, w * 0.16, 0, 7); ctx.fill();
-  const planets = [[0.17, '#a9a39b', 6], [0.24, '#e8c07a', 9], [0.31, '#4d8dff', 10], [0.38, '#e0573a', 8], [0.47, '#d9a066', 20], [0.56, '#e8d3a8', 16]];
-  planets.forEach(([r, col, s], i) => {
-    ctx.strokeStyle = 'rgba(160,180,255,0.25)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.ellipse(cx, cy, r * w, r * w * 0.38, 0, 0, 7); ctx.stroke();
-    const a = 1.1 + i * 1.7;
-    const x = cx + Math.cos(a) * r * w, y = cy + Math.sin(a) * r * w * 0.38;
-    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, s, 0, 7); ctx.fill();
-    if (i === 5) { ctx.strokeStyle = '#f0e0b8'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(x, y, s * 2, s * 0.6, -0.3, 0, 7); ctx.stroke(); }
-  });
-  ctx.direction = 'rtl'; ctx.textAlign = 'center'; ctx.fillStyle = '#f2f4ff';
-  ctx.font = `700 ${w * 0.1}px ${FONT}`;
-  ctx.fillText('מסע במערכת השמש', w / 2, h * 0.84);
-  ctx.font = `400 ${w * 0.055}px ${FONT}`; ctx.fillStyle = '#aab3dd';
-  ctx.fillText('🪐 השמש ושמונת כוכבי הלכת', w / 2, h * 0.92);
+  ctx.fillStyle = '#1f2a44'; ctx.font = `500 ${w * 0.045}px ${FONT}`;
+  ctx.fillText('האות החשמלי עובר מלמעלה למטה', w / 2, h * 0.9);
 }
 
 function drawBoard(ctx, w, h) {
@@ -633,11 +635,10 @@ export async function buildLab(scene, renderer, onProgress = () => {}) {
   const xrayLight = add(door, rbox(0.3, 0.1, 0.06, 0.02), new THREE.MeshStandardMaterial({ color: '#ff4444', emissive: '#ff2020', emissiveIntensity: 0.4 }), [0.55, 2.48, 0.03]);
   tag(door, 'door');
 
-  // ---- 10: פוסטר החלל ----
+  // ---- כרזה על מערכת ההולכה של הלב ----
   const poster = group(lab, [-2.2, 1.62, Z + 0.07]);
   add(poster, rbox(0.82, 1.12, 0.03, 0.01), mat('#c9d1e6', 0.35, 0.6));
   add(poster, new THREE.PlaneGeometry(0.76, 1.06), new THREE.MeshStandardMaterial({ map: canvasTexture(512, 720, drawPoster), roughness: 0.35 }), [0, 0, 0.017]);
-  tag(poster, 'space');
 
   // ---- 11: הלוח ----
   const board = group(lab, [-0.6, 1.55, Z + 0.07]);
